@@ -1,0 +1,195 @@
+version: '3.8'
+
+services:
+  # ===== BANCO DE DADOS =====
+  postgres:
+    image: postgres:15-alpine
+    container_name: pedidos-veloz-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-pedidos_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-pedidos_secret_2024}
+      POSTGRES_DB: ${DB_NAME:-pedidos_veloz}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - pedidos-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-pedidos_user} -d ${DB_NAME:-pedidos_veloz}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===== MICROSSERVIÇOS =====
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      LOG_LEVEL: info
+      ORDERS_SERVICE_URL: http://orders-service:3001
+      PAYMENTS_SERVICE_URL: http://payments-service:3002
+      INVENTORY_SERVICE_URL: http://inventory-service:3003
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_SERVICE_NAME: api-gateway
+    depends_on:
+      orders-service:
+        condition: service_healthy
+      payments-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+    networks:
+      - pedidos-network
+
+  orders-service:
+    build:
+      context: ./orders-service
+      dockerfile: Dockerfile
+    container_name: orders-service
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      NODE_ENV: production
+      LOG_LEVEL: info
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-pedidos_user}
+      DB_PASSWORD: ${DB_PASSWORD:-pedidos_secret_2024}
+      DB_NAME: ${DB_NAME:-pedidos_veloz}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_SERVICE_NAME: orders-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pedidos-network
+
+  payments-service:
+    build:
+      context: ./payments-service
+      dockerfile: Dockerfile
+    container_name: payments-service
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: 3002
+      NODE_ENV: production
+      LOG_LEVEL: info
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-pedidos_user}
+      DB_PASSWORD: ${DB_PASSWORD:-pedidos_secret_2024}
+      DB_NAME: ${DB_NAME:-pedidos_veloz}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_SERVICE_NAME: payments-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pedidos-network
+
+  inventory-service:
+    build:
+      context: ./inventory-service
+      dockerfile: Dockerfile
+    container_name: inventory-service
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      PORT: 3003
+      NODE_ENV: production
+      LOG_LEVEL: info
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-pedidos_user}
+      DB_PASSWORD: ${DB_PASSWORD:-pedidos_secret_2024}
+      DB_NAME: ${DB_NAME:-pedidos_veloz}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_SERVICE_NAME: inventory-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pedidos-network
+
+  # ===== OBSERVABILIDADE =====
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - pedidos-network
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3030:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: false
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - pedidos-network
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.50
+    container_name: jaeger
+    restart: unless-stopped
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"  # UI
+      - "14268:14268"
+      - "14250:14250"
+      - "9411:9411"
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    environment:
+      COLLECTOR_ZIPKIN_HOST_PORT: ":9411"
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      - pedidos-network
+
+networks:
+  pedidos-network:
+    driver: bridge
+    name: pedidos-veloz-net
+
+volumes:
+  postgres_data:
+    name: pedidos-veloz-postgres-data
+  prometheus_data:
+    name: pedidos-veloz-prometheus-data
+  grafana_data:
+    name: pedidos-veloz-grafana-data

@@ -1,0 +1,203 @@
+name: Pedidos Veloz CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+env:
+  DOCKER_REGISTRY: docker.io
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  # Job 1: Testes e validação
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api-gateway, orders-service, payments-service, inventory-service]
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.service }}/package.json
+
+      - name: Instalar dependências
+        working-directory: ${{ matrix.service }}
+        run: npm ci
+
+      - name: Verificar sintaxe
+        working-directory: ${{ matrix.service }}
+        run: node --check server.js
+
+  # Job 2: Build das imagens Docker
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      matrix:
+        service: [api-gateway, orders-service, payments-service, inventory-service]
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build e Push da imagem
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ matrix.service }}
+          file: ./${{ matrix.service }}/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/pedidos-veloz-${{ matrix.service }}:${{ github.sha }}
+            ${{ secrets.DOCKER_USERNAME }}/pedidos-veloz-${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Job 3: Validação dos manifestos K8s
+  validate-k8s:
+    name: Validate Kubernetes Manifests
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Validar manifestos com kubectl
+        run: |
+          for file in k8s/*.yaml; do
+            echo "Validando $file..."
+            kubectl apply --dry-run=client -f "$file" || true
+          done
+
+      - name: Instalar kubeval
+        run: |
+          wget https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
+          tar xf kubeval-linux-amd64.tar.gz
+          sudo mv kubeval /usr/local/bin/
+
+      - name: Validar com kubeval
+        run: |
+          kubeval k8s/*.yaml --ignore-missing-schemas || true
+
+  # Job 4: Security scan
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+          format: 'table'
+
+  # Job 5: Deploy para staging (simulado)
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build, validate-k8s]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy simulado para staging
+        run: |
+          echo "=== DEPLOY SIMULADO PARA STAGING ==="
+          echo "Imagens que seriam deployadas:"
+          echo "  - pedidos-veloz-api-gateway:${{ github.sha }}"
+          echo "  - pedidos-veloz-orders-service:${{ github.sha }}"
+          echo "  - pedidos-veloz-payments-service:${{ github.sha }}"
+          echo "  - pedidos-veloz-inventory-service:${{ github.sha }}"
+          echo ""
+          echo "Comando que seria executado:"
+          echo "  kubectl apply -k k8s/"
+          echo "==================================="
+
+  # Job 6: Deploy para produção (simulado)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, validate-k8s, security-scan]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy simulado para produção
+        run: |
+          echo "=== DEPLOY SIMULADO PARA PRODUCAO ==="
+          echo "Imagens que seriam deployadas:"
+          echo "  - pedidos-veloz-api-gateway:${{ github.sha }}"
+          echo "  - pedidos-veloz-orders-service:${{ github.sha }}"
+          echo "  - pedidos-veloz-payments-service:${{ github.sha }}"
+          echo "  - pedidos-veloz-inventory-service:${{ github.sha }}"
+          echo ""
+          echo "Manifests K8s aplicados:"
+          ls -la k8s/
+          echo ""
+          echo "Comando que seria executado:"
+          echo "  kubectl apply -k k8s/"
+          echo "======================================"
+
+  # Job 7: Notificação
+  notify:
+    name: Notify Status
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+
+    steps:
+      - name: Pipeline status
+        run: |
+          echo "Pipeline executado com sucesso!"
+          echo "Branch: ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Autor: ${{ github.actor }}"

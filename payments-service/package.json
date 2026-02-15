@@ -1,0 +1,22 @@
+{
+  "name": "payments-service",
+  "version": "1.0.0",
+  "description": "Servico de Pagamentos - Pedidos Veloz",
+  "main": "server.js",
+  "scripts": {
+    "start": "node -r ./tracing.js server.js",
+    "dev": "node --watch -r ./tracing.js server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "dotenv": "^16.3.1",
+    "uuid": "^9.0.0",
+    "prom-client": "^15.1.0",
+    "winston": "^3.11.0",
+    "@opentelemetry/sdk-node": "^0.52.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.47.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.52.0",
+    "@opentelemetry/resources": "^1.25.0",
+    "@opentelemetry/semantic-conventions": "^1.25.0"
+  }
+}

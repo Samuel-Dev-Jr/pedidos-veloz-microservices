@@ -1,0 +1,23 @@
+# Kustomize para facilitar deploy de todos os recursos
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: pedidos-veloz
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - postgres.yaml
+  - api-gateway.yaml
+  - orders-service.yaml
+  - payments-service.yaml
+  - inventory-service.yaml
+  - hpa-orders.yaml
+  - observability/prometheus.yaml
+  - observability/grafana.yaml
+  - observability/jaeger.yaml
+
+commonLabels:
+  project: pedidos-veloz
+  environment: production

@@ -1,0 +1,38 @@
+# Configuração do Prometheus para coletar métricas dos microsserviços
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Regras de alertas (opcional, mas útil para produção)
+rule_files:
+  # - "alerts.yml"
+
+scrape_configs:
+  # Métricas do próprio Prometheus
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # API Gateway
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:3000']
+    metrics_path: /metrics
+
+  # Orders Service
+  - job_name: 'orders-service'
+    static_configs:
+      - targets: ['orders-service:3001']
+    metrics_path: /metrics
+
+  # Payments Service
+  - job_name: 'payments-service'
+    static_configs:
+      - targets: ['payments-service:3002']
+    metrics_path: /metrics
+
+  # Inventory Service
+  - job_name: 'inventory-service'
+    static_configs:
+      - targets: ['inventory-service:3003']
+    metrics_path: /metrics
